@@ -3,39 +3,12 @@
 import os; activate_this=os.path.join(os.path.dirname(os.path.realpath(__file__)), 'activate_this.py'); exec(compile(open(activate_this).read(), activate_this, 'exec'), dict(__file__=activate_this)); del os, activate_this
 
 
-import steem
+# -*- coding: utf-8 -*-
+import re
 import sys
-import argparse
-import pprint
-import json
-from steem.blockchain import Blockchain
 
-def main():
-    parser = argparse.ArgumentParser(description="UNIX tail(1)-like tool for the steem blockchain")
-    parser.add_argument('-f','--follow',help='Constantly stream output to stdout', action='store_true')
-    parser.add_argument('-n','--lines', type=int,  default=10,    help='How many ops to show')
-    parser.add_argument('-j','--json',  help='Output as JSON instead of human-readable pretty-printed format', action='store_true')
-    args = parser.parse_args(sys.argv[1:])
+from steem.cli import steemtailentry
 
-    b = Blockchain()
-    stream = b.reliable_stream()
-
-    op_count = 0
-    if args.json: 
-       if not args.follow: sys.stdout.write('[')
-    for op in stream:
-        if args.json:
-           sys.stdout.write('%s' % json.dumps(op))
-        else:
-           pprint.pprint(op)
-        op_count += 1
-        if not args.follow:
-           if op_count > args.lines:
-              if args.json: sys.stdout.write(']')
-              return
-           else:
-              if args.json: sys.stdout.write(',')
-
-
-if __name__=='__main__':
-   main()
+if __name__ == '__main__':
+    sys.argv[0] = re.sub(r'(-script\.pyw?|\.exe)?$', '', sys.argv[0])
+    sys.exit(steemtailentry())
