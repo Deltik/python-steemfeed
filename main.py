@@ -13,8 +13,8 @@ def main():
     witness_name = config['steem-secrets']['witness_name']
     wallet_password = config['steem-secrets']['wallet_password']
 
-    result = requests.get('https://api.coinmarketcap.com/v1/ticker/steem/')
-    price = result.json()[0]['price_usd']
+    result = requests.get('https://api.coinmarketcap.com/v2/ticker/1230/?convert=USD')
+    price = result.json()['data']['quotes']['USD']['price']
     try:
         price = float(price)
     except ValueError:
@@ -25,6 +25,7 @@ def main():
         print("Price %s is too low!" % price)
         exit(1)
 
+    print("Witness name: %s" % witness_name)
     print("Price received: %s" % price)
 
     steem = Steem(nodes=nodes, keys=keys)
