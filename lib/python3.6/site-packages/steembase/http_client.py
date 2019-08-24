@@ -9,7 +9,7 @@ from itertools import cycle
 import concurrent.futures
 import certifi
 import urllib3
-from steembase.exceptions import RPCError
+from steembase.exceptions import RPCError, RPCErrorRecoverable
 from urllib3.connection import HTTPConnection
 from urllib3.exceptions import MaxRetryError, ReadTimeoutError, ProtocolError
 
@@ -53,8 +53,10 @@ class HttpClient(object):
 
     """
 
+    # set of endpoints which were detected to not support condenser_api
+    non_appbase_nodes = set()
+
     def __init__(self, nodes, **kwargs):
-        self.return_with_args = kwargs.get('return_with_args', False)
         self.re_raise = kwargs.get('re_raise', True)
         self.max_workers = kwargs.get('max_workers', None)
 
@@ -88,13 +90,43 @@ class HttpClient(object):
             **response_kw)
         '''
 
-        self.nodes = cycle(nodes)
+        self.nodes = cycle(self.sanitize_nodes(nodes))
         self.url = ''
         self.request = None
         self.next_node()
 
         log_level = kwargs.get('log_level', logging.INFO)
         logger.setLevel(log_level)
+
+    def _curr_node_downgraded(self):
+        return self.url in HttpClient.non_appbase_nodes
+
+    def _downgrade_curr_node(self):
+        HttpClient.non_appbase_nodes.add(self.url)
+
+    def _is_error_recoverable(self, error):
+        assert 'message' in error, "missing error msg key: {}".format(error)
+        assert 'code' in error, "missing error code key: {}".format(error)
+        message = error['message']
+        code = error['code']
+
+        # common steemd error
+        # {"code"=>-32003, "message"=>"Unable to acquire database lock"}
+        if message == 'Unable to acquire database lock':
+            return True
+
+        # rare steemd error
+        # {"code"=>-32000, "message"=>"Unknown exception", "data"=>"0 exception: unspecified\nUnknown Exception\n[...]"}
+        if message == 'Unknown exception':
+            return True
+
+        # generic jussi error
+        # {'code': -32603, 'message': 'Internal Error', 'data': {'error_id': 'c7a15140-f306-4727-acbd-b5e8f3717e9b',
+        #         'request': {'amzn_trace_id': 'Root=1-5ad4cb9f-9bc86fbca98d9a180850fb80', 'jussi_request_id': None}}}
+        if message == 'Internal Error' and code == -32603:
+            return True
+
+        return False
 
     def next_node(self):
         """ Switch to the next available node.
@@ -144,31 +176,31 @@ class HttpClient(object):
             Otherwise, a Python dictionary is returned.
 
         """
-        api = kwargs.pop('api', None)
+
+        # if kwargs is non-empty after this, it becomes the call params
         as_json = kwargs.pop('as_json', True)
+        api = kwargs.pop('api', None)
         _id = kwargs.pop('_id', 0)
 
-        headers = {"jsonrpc": "2.0", "id": _id}
-        if kwargs is not None and len(kwargs) > 0:
+        # `kwargs` for object-style param, `args` for list-style. pick one.
+        assert not (kwargs and args), 'fail - passed array AND object args'
+        params = kwargs if kwargs else args
 
-            body_dict = dict(headers)
-            body_dict.update({"method": "call",
-                              "params": [api, name, kwargs]})
-        elif api:
-
-            body_dict = dict(headers)
-            body_dict.update({"method": "call",
-                              "params": [api, name, args]})
-
+        if api:
+            body = {'jsonrpc': '2.0',
+                    'id': _id,
+                    'method': 'call',
+                    'params': [api, name, params]}
         else:
-
-            body_dict = dict(headers)
-            body_dict.update({"method": name, "params": args})
+            body = {'jsonrpc': '2.0',
+                    'id': _id,
+                    'method': name,
+                    'params': params}
 
         if as_json:
-            return json.dumps(body_dict, ensure_ascii=False).encode('utf8')
-        else:
-            return body_dict
+            return json.dumps(body, ensure_ascii=False).encode('utf8')
+
+        return body
 
     def call(self,
              name,
@@ -179,108 +211,145 @@ class HttpClient(object):
         Warnings:
 
             This command will auto-retry in case of node failure, as well
-            as handle node fail-over, unless we are broadcasting a
-            transaction.  In latter case, the exception is **re-raised**.
+            as handle node fail-over.
 
         """
 
-        api = kwargs.get('api', None)
-        return_with_args = kwargs.get('return_with_args', None)
-        _ret_cnt = kwargs.get('_ret_cnt', 0)
+        # tuple of Exceptions which are eligible for retry
+        retry_exceptions = (MaxRetryError, ReadTimeoutError,
+                            ProtocolError, RPCErrorRecoverable,)
 
-        body = HttpClient.json_rpc_body(name, *args, **kwargs)
-        response = None
+        if sys.version > '3.5':
+            retry_exceptions += (json.decoder.JSONDecodeError,)
+        else:
+            retry_exceptions += (ValueError,)
 
         if sys.version > '3.0':
-            errorList = (MaxRetryError, ReadTimeoutError, ProtocolError,
-                         RemoteDisconnected, ConnectionResetError,)
+            retry_exceptions += (RemoteDisconnected, ConnectionResetError,)
         else:
-            errorList = (MaxRetryError, ReadTimeoutError, ProtocolError,
-                         HTTPException,)
+            retry_exceptions += (HTTPException,)
 
-        try:
-            response = self.request(body=body)
-        except (errorList) as e:
-            # if we broadcasted a transaction, always raise
-            # this is to prevent potential for double spend scenario
-            if api == 'network_broadcast_api':
-                raise e
-
-            # try switching nodes before giving up
-            if _ret_cnt > 2:
-                # we should wait only a short period before trying
-                # the next node, but still slowly increase backoff
-                time.sleep(_ret_cnt)
-            if _ret_cnt > 10:
-                raise e
-            self.next_node()
-            logging.debug('Switched node to %s due to exception: %s' %
-                          (self.hostname, e.__class__.__name__))
-            return self.call(
-                name,
-                return_with_args=return_with_args,
-                _ret_cnt=_ret_cnt + 1,
-                *args)
-        except Exception as e:
-            if self.re_raise:
-                raise e
-            else:
-                extra = dict(err=e, request=self.request)
-                logger.info('Request error', extra=extra)
-                return self._return(
-                    response=response,
-                    args=args,
-                    return_with_args=return_with_args)
-        else:
-            redirectStatuses = list(response.REDIRECT_STATUSES)
-            redirectStatuses.append(200)
-            if response.status not in tuple(redirectStatuses):
-                logger.info('non 200 response:%s', response.status)
-
-            return self._return(
-                response=response,
-                args=args,
-                return_with_args=return_with_args)
-
-    def _return(self, response=None, args=None, return_with_args=None):
-        return_with_args = return_with_args or self.return_with_args
-        result = None
-
-        if response:
+        tries = 0
+        while True:
             try:
-                response_json = json.loads(response.data.decode('utf-8'))
+
+                body_kwargs = kwargs.copy()
+                if not self._curr_node_downgraded():
+                    body_kwargs['api'] = 'condenser_api'
+
+                body = HttpClient.json_rpc_body(name, *args, **body_kwargs)
+                response = self.request(body=body)
+
+                success_codes = tuple(list(response.REDIRECT_STATUSES) + [200])
+                if response.status not in success_codes:
+                    raise RPCErrorRecoverable("non-200 response: %s from %s"
+                                              % (response.status, self.hostname))
+
+                result = json.loads(response.data.decode('utf-8'))
+                assert result, 'result entirely blank'
+
+                if 'error' in result:
+                    # legacy (pre-appbase) nodes always return err code 1
+                    legacy = result['error']['code'] == 1
+                    detail = result['error']['message']
+
+                    # some errors have no data key (db lock error)
+                    if 'data' not in result['error']:
+                        error = 'error'
+                    # some errors have no name key (jussi errors)
+                    elif 'name' not in result['error']['data']:
+                        error = 'unspecified error'
+                    else:
+                        error = result['error']['data']['name']
+
+                    if legacy:
+                        detail = ":".join(detail.split("\n")[0:2])
+                        if not self._curr_node_downgraded():
+                            self._downgrade_curr_node()
+                            logging.error('Downgrade-retry %s', self.hostname)
+                            continue
+
+                    detail = ('%s from %s (%s) in %s' % (
+                        error, self.hostname, detail, name))
+
+                    if self._is_error_recoverable(result['error']):
+                        raise RPCErrorRecoverable(detail)
+                    else:
+                        raise RPCError(detail)
+
+                return result['result']
+
+            except retry_exceptions as e:
+                if e == ValueError and 'JSON' not in e.args[0]:
+                    raise e  # (python<3.5 lacks json.decoder.JSONDecodeError)
+                if tries >= 10:
+                    logging.error('Failed after %d attempts -- %s: %s',
+                                  tries, e.__class__.__name__, e)
+                    raise e
+                tries += 1
+                logging.warning('Retry in %ds -- %s: %s', tries,
+                                e.__class__.__name__, e)
+                time.sleep(tries)
+                self.next_node()
+                continue
+
+            # TODO: unclear why this case is here; need to explicitly
+            #       define exceptions for which we refuse to retry.
             except Exception as e:
-                extra = dict(response=response, request_args=args, err=e)
-                logger.info('failed to load response', extra=extra)
-                result = None
-            else:
-                if 'error' in response_json:
-                    error = response_json['error']
-
-                    if self.re_raise:
-                        error_message = error.get(
-                            'detail', response_json['error']['message'])
-                        raise RPCError(error_message)
-
-                    result = response_json['error']
-                else:
-                    result = response_json.get('result', None)
-        if return_with_args:
-            return result, args
-        else:
-            return result
+                extra = dict(err=e, request=self.request)
+                logger.error('Unexpected exception! Please report at ' +
+                             'https://github.com/steemit/steem-python/issues' +
+                             ' -- %s: %s', e.__class__.__name__, e, extra=extra)
+                raise e
 
     def call_multi_with_futures(self, name, params, api=None,
                                 max_workers=None):
         with concurrent.futures.ThreadPoolExecutor(
                 max_workers=max_workers) as executor:
             # Start the load operations and mark each future with its URL
-            def ensure_list(parameter):
-                return parameter if type(parameter) in (list, tuple,
-                                                        set) else [parameter]
+            def ensure_list(val):
+                return val if isinstance(val, (list, tuple, set)) else [val]
 
             futures = (executor.submit(
                 self.call, name, *ensure_list(param), api=api)
                 for param in params)
             for future in concurrent.futures.as_completed(futures):
                 yield future.result()
+
+    def sanitize_nodes(self, nodes):
+        """
+
+        This method is designed to explicitly validate the user defined
+        nodes that are passed to http_client. If left unvalidated, improper
+        input causes a variety of explicit-to-red herring errors in the code base.
+        This will fail loudly in the event that incorrect input has been passed.
+
+        There are three types of input allowed when defining nodes.
+        1. a string of a single node url. ie nodes='https://api.steemit.com'
+        2. a comma separated string of several node url's.
+            nodes='https://api.steemit.com,<<community node>>,<<your personal node>>'
+        3. a list of string node url's.
+            nodes=['https://api.steemit.com','<<community node>>','<<your personal node>>']
+
+        Any other input will result in a ValueError being thrown.
+
+        :param nodes: the nodes argument passed to http_client
+        :return: a list of node url's.
+        """
+
+        if self._isString(nodes):
+            nodes = nodes.split(',')
+        elif isinstance(nodes, list):
+            if not all(self._isString(node) for node in nodes):
+                raise ValueError("All nodes in list must be a string.")
+        else:
+            raise ValueError("nodes arg must be a "
+                             "comma separated string of node url's, "
+                             "a single string url, "
+                             "or a list of strings.")
+
+        return nodes
+
+    def _isString(self, input):
+        return isinstance(input, str) or \
+               (sys.version < '3.0' and isinstance(input, unicode))

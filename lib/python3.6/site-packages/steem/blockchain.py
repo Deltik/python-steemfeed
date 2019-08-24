@@ -78,7 +78,7 @@ class Blockchain(object):
 
         _ = kwargs  # we need this
         # Let's find out how often blocks are generated!
-        block_interval = self.config().get("STEEMIT_BLOCK_INTERVAL")
+        block_interval = self.config().get("STEEM_BLOCK_INTERVAL")
 
         if not start_block:
             start_block = self.get_current_block_num()
@@ -156,27 +156,23 @@ class Blockchain(object):
 
         def reliable_query(_client, _method, _api, *_args):
             # this will ALWAYS eventually return, at all costs
-            retval = None
-            while retval is None:
+            while True:
                 try:
-                    retval = _client.call(_method, *_args, api=_api)
+                    return _client.call(_method, *_args, api=_api)
                 except Exception as e:
-                    logger.info(
-                        'Failed to get response',
+                    logger.error(
+                        'Error: %s' % str(s),
                         extra=dict(
                             exc=e,
                             response=retval,
                             api_name=_api,
                             api_method=_method,
                             api_args=_args))
-                    retval = None
-                if retval is None:
                     time.sleep(1)
-            return retval
 
         def get_reliable_block_interval(_client):
             return reliable_query(_client, 'get_config',
-                                  'database_api').get('STEEMIT_BLOCK_INTERVAL')
+                                  'database_api').get('STEEM_BLOCK_INTERVAL')
 
         def get_reliable_current_block(_client):
             return reliable_query(_client, 'get_dynamic_global_properties',

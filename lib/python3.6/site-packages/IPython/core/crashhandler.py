@@ -53,6 +53,16 @@ with the subject '{app_name} Crash Report'.
 If you want to do it now, the following command will work (under Unix):
 mail -s '{app_name} Crash Report' {contact_email} < {crash_report_fname}
 
+In your email, please also include information about:
+- The operating system under which the crash happened: Linux, macOS, Windows,
+  other, and which exact version (for example: Ubuntu 16.04.3, macOS 10.13.2,
+  Windows 10 Pro), and whether it is 32-bit or 64-bit;
+- How {app_name} was installed: using pip or conda, from GitHub, as part of
+  a Docker container, or other, providing more detail if possible;
+- How to reproduce the crash: what exact sequence of instructions can one
+  input to get the same crash? Ideally, find a minimal yet complete sequence
+  of instructions that yields the crash.
+
 To ensure accurate tracking of this issue, please file a report about it at:
 {bug_tracker}
 """
@@ -169,13 +179,14 @@ class CrashHandler(object):
             print('Could not create crash report on disk.', file=sys.stderr)
             return
 
-        # Inform user on stderr of what happened
-        print('\n'+'*'*70+'\n', file=sys.stderr)
-        print(self.message_template.format(**self.info), file=sys.stderr)
+        with report:
+            # Inform user on stderr of what happened
+            print('\n'+'*'*70+'\n', file=sys.stderr)
+            print(self.message_template.format(**self.info), file=sys.stderr)
 
-        # Construct report on disk
-        report.write(self.make_report(traceback))
-        report.close()
+            # Construct report on disk
+            report.write(self.make_report(traceback))
+
         input("Hit <Enter> to quit (your terminal may close):")
 
     def make_report(self,traceback):

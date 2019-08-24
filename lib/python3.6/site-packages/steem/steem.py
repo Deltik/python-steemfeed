@@ -1,6 +1,5 @@
 from .commit import Commit
 from .steemd import Steemd
-from steembase.exceptions import RPCError
 
 
 class Steem:
@@ -91,10 +90,8 @@ class Steem:
             return
 
         def __call__(self, *args, **kwargs):
+            assert not (args and kwargs), "specified both args and kwargs"
             if len(kwargs) > 0:
-                if len(args) > 0:
-                    raise RPCError(
-                        "Cannot specify both args and kwargs in RPC")
                 return self.exec_method(
                     self.method_name, kwargs=kwargs, api=self.api_name)
             return self.exec_method(self.method_name, *args, api=self.api_name)

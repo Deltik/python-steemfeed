@@ -574,7 +574,7 @@ class IPDocTestRunner(doctest.DocTestRunner,object):
         # so that it can propagate user variables loaded by %run into
         # test.globs.  We put them here into our modified %run as a function
         # attribute.  Our new %run will then only make the namespace update
-        # when called (rather than unconconditionally updating test.globs here
+        # when called (rather than unconditionally updating test.globs here
         # for all examples, most of which won't be calling %run anyway).
         #_ip._ipdoctest_test_globs = test.globs
         #_ip._ipdoctest_test_filename = test.filename
@@ -688,11 +688,8 @@ class ExtensionDoctest(doctests.Doctest):
         else:
             if self.extension and anyp(filename.endswith, self.extension):
                 name = os.path.basename(filename)
-                dh = open(filename)
-                try:
+                with open(filename) as dh:
                     doc = dh.read()
-                finally:
-                    dh.close()
                 test = self.parser.get_doctest(
                     doc, globs={'__file__': filename}, name=name,
                     filename=filename, lineno=0)

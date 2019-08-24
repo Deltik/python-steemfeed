@@ -31,13 +31,6 @@ def main():
     steem = Steem(nodes=nodes, keys=keys)
     wallet = steem.wallet
 
-    # Workaround for library bug
-    from steembase.storage import MasterPassword
-    wallet.MasterPassword = MasterPassword
-
-    wallet.masterpassword = MasterPassword(wallet_password).decrypted_master
-    # End workaround
-
     steem.commit.witness_feed_publish(price, account=witness_name)
 
     pprint(steem.get_witness_by_account(witness_name))

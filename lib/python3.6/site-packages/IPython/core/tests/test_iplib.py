@@ -8,14 +8,6 @@
 import nose.tools as nt
 
 # our own packages
-from IPython.testing.globalipapp import get_ipython
-
-#-----------------------------------------------------------------------------
-# Globals
-#-----------------------------------------------------------------------------
-
-# Get the public instance of IPython
-ip = get_ipython()
 
 #-----------------------------------------------------------------------------
 # Test functions
@@ -72,7 +64,7 @@ In [4]: run simpleerr.py
 ---------------------------------------------------------------------------
 ZeroDivisionError                         Traceback (most recent call last)
 <BLANKLINE>
-... in <module>()
+... in <module>
      30         mode = 'div'
      31 
 ---> 32     bar(mode)
@@ -104,7 +96,7 @@ In [6]: run simpleerr.py
 ---------------------------------------------------------------------------
 ZeroDivisionError                         Traceback (most recent call last)
 <BLANKLINE>
-... in <module>()
+... in <module>
      30         mode = 'div'
      31 
 ---> 32     bar(mode)
@@ -161,7 +153,7 @@ In [22]: %tb
 ---------------------------------------------------------------------------
 SystemExit                                Traceback (most recent call last)
 <BLANKLINE>
-...<module>()
+...<module>
      30         mode = 'div'
      31 
 ---> 32     bar(mode)
@@ -189,7 +181,7 @@ In [24]: %tb
 ---------------------------------------------------------------------------
 SystemExit                                Traceback (most recent call last)
 <BLANKLINE>
-... in <module>()
+... in <module>
      30         mode = 'div'
      31 
 ---> 32     bar(mode)
