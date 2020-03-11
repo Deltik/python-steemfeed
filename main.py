@@ -3,6 +3,21 @@ import configparser
 import requests
 from steem import Steem
 from pprint import pprint
+from html.parser import HTMLParser
+import re
+
+class CoinMarketCapPriceHTMLParser(HTMLParser):
+    next_data_is_price = False
+    raw_price = ''
+
+    def handle_starttag(self, tag, attrs):
+        if tag == 'span' and any(attr[1] == 'cmc-details-panel-price__price' for attr in attrs):
+            self.next_data_is_price = True
+
+    def handle_data(self, data):
+        if self.next_data_is_price:
+            self.raw_price = data
+            self.next_data_is_price = False
 
 def main():
     config = configparser.ConfigParser()
@@ -13,8 +28,10 @@ def main():
     witness_name = config['steem-secrets']['witness_name']
     wallet_password = config['steem-secrets']['wallet_password']
 
-    result = requests.get('https://api.coinmarketcap.com/v2/ticker/1230/?convert=USD')
-    price = result.json()['data']['quotes']['USD']['price']
+    result = requests.get('https://coinmarketcap.com/currencies/steem/')
+    parser = CoinMarketCapPriceHTMLParser()
+    parser.feed(result.text)
+    price = re.sub(r'[\$,]', '', parser.raw_price)
     try:
         price = float(price)
     except ValueError:
